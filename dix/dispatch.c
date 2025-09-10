@@ -140,6 +140,10 @@ Equipment Corporation.
 #include "xfixesint.h"
 #include "dixstruct_priv.h"
 
+#ifdef HAVE_OPENMP
+#include <omp.h>
+#endif
+
 #define mskcnt ((MAXCLIENTS + 31) / 32)
 #define BITMASK(i) (1U << ((i) & 31))
 #define MASKIDX(i) ((i) >> 5)
@@ -438,15 +442,20 @@ SetDispatchExceptionTimer(void)
 static Bool
 ShouldDisconnectRemainingClients(void)
 {
+    volatile bool flag_thread_ret = true;
+#ifdef HAVE_OPENMP
+#pragma omp parallel for shared(flag_thread_ret)
+#endif
     for (int i = 1; i < currentMaxClients; i++) {
+        if (!flag_thread_ret) continue;
         if (clients[i]) {
             if (!XFixesShouldDisconnectClient(clients[i]))
-                return FALSE;
+                flag_thread_ret = false;
         }
     }
 
     /* All remaining clients can be safely ignored */
-    return TRUE;
+    return flag_thread_ret;
 }
 
 void
@@ -638,6 +647,9 @@ CreateConnectionBlock(void)
         *pBuf++ = 0;
 
     memset(&format, 0, sizeof(xPixmapFormat));
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int i = 0; i < screenInfo.numPixmapFormats; i++) {
         format.depth = screenInfo.formats[i].depth;
         format.bitsPerPixel = screenInfo.formats[i].bitsPerPixel;
@@ -650,7 +662,12 @@ CreateConnectionBlock(void)
     connBlockScreenStart = sizesofar;
     memset(&depth, 0, sizeof(xDepth));
     memset(&visual, 0, sizeof(xVisualType));
+    volatile bool flag_thread_ret = true;
+#ifdef HAVE_OPENMP
+#pragma omp parallel for shared(flag_thread_ret)
+#endif
     for (int i = 0; i < screenInfo.numScreens; i++) {
+        if (!flag_thread_ret) continue;
         DepthPtr pDepth;
         VisualPtr pVisual;
         ScreenPtr walkScreen = screenInfo.screens[i];
@@ -676,13 +693,16 @@ CreateConnectionBlock(void)
         pBuf += sizeof(xWindowRoot);
 
         pDepth = walkScreen->allowedDepths;
-        for (int j = 0; j < walkScreen->numDepths; j++, pDepth++) {
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
+        for (int j = 0; j < walkScreen->numDepths; j++) {
             lenofblock += sizeof(xDepth) +
                 (pDepth->numVids * sizeof(xVisualType));
             pBuf = (char *) realloc(ConnectionInfo, lenofblock);
             if (!pBuf) {
                 free(ConnectionInfo);
-                return FALSE;
+                flag_thread_ret = false;
             }
             ConnectionInfo = pBuf;
             pBuf += sizesofar;
@@ -706,13 +726,14 @@ CreateConnectionBlock(void)
                 pBuf += sizeof(xVisualType);
                 sizesofar += sizeof(xVisualType);
             }
+            pDepth++;
         }
     }
     connSetupPrefix.success = xTrue;
     connSetupPrefix.length = lenofblock / 4;
     connSetupPrefix.majorVersion = X_PROTOCOL;
     connSetupPrefix.minorVersion = X_PROTOCOL_REVISION;
-    return TRUE;
+    return flag_thread_ret;
 }
 
 int
@@ -1696,7 +1717,10 @@ SendGraphicsExpose(ClientPtr client, RegionPtr pRgn, XID drawable,
             return;
         pe = pEvent;
 
-        for (int i = 1; i <= numRects; i++, pe++, pBox++) {
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
+        for (int i = 1; i <= numRects; i++) {
             pe->u.u.type = GraphicsExpose;
             pe->u.graphicsExposure.drawable = drawable;
             pe->u.graphicsExposure.x = pBox->x1;
@@ -1706,6 +1730,8 @@ SendGraphicsExpose(ClientPtr client, RegionPtr pRgn, XID drawable,
             pe->u.graphicsExposure.count = numRects - i;
             pe->u.graphicsExposure.majorEvent = major;
             pe->u.graphicsExposure.minorEvent = minor;
+            pe++;
+            pBox++;
         }
         /* GraphicsExpose is a "critical event", which TryClientEvents
          * handles specially. */
@@ -3353,6 +3379,9 @@ CloseDownRetainedResources(void)
 {
     ClientPtr client;
 
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int i = 1; i < currentMaxClients; i++) {
         client = clients[i];
         if (client && (client->closeDownMode == RetainTemporary)
@@ -3599,6 +3628,9 @@ CloseDownClient(ClientPtr client)
 static void
 KillAllClients(void)
 {
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int i = 1; i < currentMaxClients; i++)
         if (clients[i]) {
             /* Make sure Retained clients are released. */
@@ -3758,6 +3790,9 @@ SendConnSetup(ClientPtr client, const char *reason)
         numScreens = ((xConnSetup *) ConnectionInfo)->numRoots;
 #endif /* XINERAMA */
 
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int i = 0; i < numScreens; i++) {
         ScreenPtr walkScreen = screenInfo.screens[i];
         xDepth *pDepth;
@@ -3962,6 +3997,9 @@ static int init_screen(ScreenPtr pScreen, int i, Bool gpu)
      * Anyway, this must be called after InitOutput and before the
      * screen init routine is called.
      */
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int format = 0; format < screenInfo.numPixmapFormats; format++) {
         depth = screenInfo.formats[format].depth;
         bitsPerPixel = screenInfo.formats[format].bitsPerPixel;
@@ -4088,6 +4126,9 @@ RemoveGPUScreen(ScreenPtr pScreen)
         return;
 
     idx = pScreen->myNum - GPU_SCREEN_OFFSET;
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int j = idx; j < screenInfo.numGPUScreens - 1; j++) {
         screenInfo.gpuscreens[j] = screenInfo.gpuscreens[j + 1];
         screenInfo.gpuscreens[j]->myNum = j + GPU_SCREEN_OFFSET;
