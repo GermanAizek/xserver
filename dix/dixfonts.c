@@ -78,6 +78,10 @@ Equipment Corporation.
 #include "xf86bigfontsrv.h"
 #endif
 
+#ifdef HAVE_OPENMP
+#include <omp.h>
+#endif
+
 extern void *fosNaturalParams;
 extern FontPtr defaultFont;
 
@@ -208,6 +212,9 @@ FontWakeup(void *data, int count)
     if (count < 0)
         return;
     /* wake up any fpe's that may be waiting for information */
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int i = 0; i < num_slept_fpes; i++) {
         fpe = slept_fpes[i];
         (void) (*fpe_functions[fpe->type]->wakeup_fpe) (fpe);
@@ -362,6 +369,9 @@ doOpenFont(ClientPtr client, OFclosurePtr c)
                           c->fontid, FontToXError(err));
     }
     ClientWakeup(c->client);
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int i = 0; i < c->num_fpes; i++) {
         FreeFPE(c->fpe_list[i]);
     }
@@ -427,6 +437,9 @@ OpenFont(ClientPtr client, XID fid, Mask flags, unsigned lenfname,
         return BadAlloc;
     }
     memcpy(c->fontname, pfontname, lenfname);
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int i = 0; i < num_fpes; i++) {
         c->fpe_list[i] = font_path_elements[i];
         UseFPE(c->fpe_list[i]);
@@ -464,6 +477,9 @@ CloseFont(void *value, XID fid)
          * since the last reference is gone, ask each screen to free any
          * storage it may have allocated locally for it.
          */
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
         for (int nscr = 0; nscr < screenInfo.numScreens; nscr++) {
             pscr = screenInfo.screens[nscr];
             if (pscr->UnrealizeFont)
@@ -528,19 +544,23 @@ QueryFont(FontPtr pFont, xQueryFontReply * pReply, int nProtoCCIStructs)
     ninfos = 0;
     ncols = (unsigned long) (pFont->info.lastCol - pFont->info.firstCol + 1);
     prCI = (xCharInfo *) (prFP);
-    for (int r = pFont->info.firstRow;
-         ninfos < nProtoCCIStructs && r <= (int) pFont->info.lastRow; r++) {
-        i = 0;
-        for (int c = pFont->info.firstCol; c <= (int) pFont->info.lastCol; c++) {
-            chars[i++] = r;
-            chars[i++] = c;
-        }
-        (*pFont->get_metrics) (pFont, ncols, chars,
-                               TwoD16Bit, &count, charInfos);
-        for (int j = 0; j < (int) count && ninfos < nProtoCCIStructs; j++) {
-            *prCI = *charInfos[j];
-            prCI++;
-            ninfos++;
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
+    for (int r = pFont->info.firstRow; r <= (int) pFont->info.lastRow; r++) {
+        if (ninfos < nProtoCCIStructs) {
+            i = 0;
+            for (int c = pFont->info.firstCol; c <= (int) pFont->info.lastCol; c++) {
+                chars[i++] = r;
+                chars[i++] = c;
+            }
+            (*pFont->get_metrics) (pFont, ncols, chars,
+                                   TwoD16Bit, &count, charInfos);
+            for (int j = 0; j < (int) count && ninfos < nProtoCCIStructs; j++) {
+                *prCI = *charInfos[j];
+                prCI++;
+                ninfos++;
+            }
         }
     }
     return;
@@ -736,6 +756,9 @@ doListFontsAndAliases(ClientPtr client, LFclosurePtr c)
     };
 
     x_rpcbuf_t rpcbuf = { .swapped = client->swapped, .err_clear = TRUE };
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int i = 0; i < names->nnames; i++) {
         if (names->length[i] > 255)
             rep.nFonts--;
@@ -759,6 +782,9 @@ doListFontsAndAliases(ClientPtr client, LFclosurePtr c)
 
  bail:
     ClientWakeup(client);
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int i = 0; i < c->num_fpes; i++)
         FreeFPE(c->fpe_list[i]);
     free(c->fpe_list);
@@ -803,6 +829,9 @@ ListFonts(ClientPtr client, unsigned char *pattern, unsigned length,
         return BadAlloc;
     }
     memmove(c->current.pattern, pattern, length);
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int i = 0; i < num_fpes; i++) {
         c->fpe_list[i] = font_path_elements[i];
         UseFPE(c->fpe_list[i]);
@@ -978,6 +1007,9 @@ doListFontsWithInfo(ClientPtr client, LFWIclosurePtr c)
             reply->fontDescent = pFontInfo->fontDescent;
             reply->nReplies = numFonts;
             pFP = (xFontProp *) (reply + 1);
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
             for (int i = 0; i < pFontInfo->nprops; i++) {
                 pFP->name = pFontInfo->props[i].name;
                 pFP->value = pFontInfo->props[i].value;
@@ -1001,6 +1033,9 @@ doListFontsWithInfo(ClientPtr client, LFWIclosurePtr c)
     X_SEND_REPLY_SIMPLE(client, rep);
  bail:
     ClientWakeup(client);
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int i = 0; i < c->num_fpes; i++)
         FreeFPE(c->fpe_list[i]);
     free(c->reply);
@@ -1038,6 +1073,9 @@ StartListFontsWithInfo(ClientPtr client, int length, unsigned char *pattern,
         goto badAlloc;
     }
     memmove(c->current.pattern, pattern, length);
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int i = 0; i < num_fpes; i++) {
         c->fpe_list[i] = font_path_elements[i];
         UseFPE(c->fpe_list[i]);
@@ -1509,6 +1547,9 @@ DetermineFPEType(const char *pathname)
 static void
 FreeFontPath(FontPathElementPtr * list, int n, Bool force)
 {
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int i = 0; i < n; i++) {
         if (force) {
             /* Sanity check that all refcounts will be 0 by the time
@@ -1742,6 +1783,9 @@ GetFontPath(ClientPtr client, int *count, int *length, unsigned char **result)
         return access;
 
     len = 0;
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int i = 0; i < num_fpes; i++) {
         fpe = font_path_elements[i];
         len += fpe->name_length + 1;
@@ -1755,6 +1799,9 @@ GetFontPath(ClientPtr client, int *count, int *length, unsigned char **result)
 
     font_path_string = c;
     *length = 0;
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int i = 0; i < num_fpes; i++) {
         fpe = font_path_elements[i];
         *c = fpe->name_length;
@@ -1772,6 +1819,9 @@ DeleteClientFontStuff(ClientPtr client)
 {
     FontPathElementPtr fpe;
 
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int i = 0; i < num_fpes; i++) {
         fpe = font_path_elements[i];
         if (fpe_functions[fpe->type]->client_died)
