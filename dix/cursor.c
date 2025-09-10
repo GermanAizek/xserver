@@ -62,6 +62,10 @@ SOFTWARE.
 #include "inputstr.h"
 #include "xace.h"
 
+#ifdef HAVE_OPENMP
+#include <omp.h>
+#endif
+
 typedef struct _GlyphShare {
     FontPtr font;
     unsigned short sourceChar;
@@ -114,6 +118,9 @@ FreeCursor(void *value, XID cid)
 
     BUG_WARN(CursorRefCount(pCurs) < 0);
 
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int nscr = 0; nscr < screenInfo.numScreens; nscr++) {
         ScreenPtr walkScreen = screenInfo.screens[nscr];
         (void) (*walkScreen->UnrealizeCursor) (pDev, walkScreen, pCurs);
