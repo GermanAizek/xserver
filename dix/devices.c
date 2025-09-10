@@ -89,6 +89,10 @@ SOFTWARE.
 #include "xichangehierarchy.h"  /* For XISendDeviceHierarchyEvent */
 #include "syncsrv.h"
 
+#ifdef HAVE_OPENMP
+#include <omp.h>
+#endif
+
 /** @file
  * This file handles input device-related stuff.
  */
@@ -123,8 +127,11 @@ DeviceSetTransform(DeviceIntPtr dev, float *transform_data)
     scale.m[1][2] = dev->valuator->axes[1].min_value;
 
     /* transform */
-    for (int y = 0; y < 3; y++)
-        for (int x = 0; x < 3; x++)
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
+    for (int x = 0; x < 3; x++)
+        for (int y = 0; y < 3; y++)
             transform.m[y][x] = *transform_data++;
 
     pixman_f_transform_multiply(&dev->scale_and_transform, &scale, &transform);
@@ -676,6 +683,9 @@ CorePointerProc(DeviceIntPtr pDev, int what)
 
     switch (what) {
     case DEVICE_INIT:
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
         for (int i = 1; i <= NBUTTONS; i++)
             map[i] = i;
 
@@ -833,6 +843,9 @@ FreeDeviceClass(int type, void **class)
     {
         TouchClassPtr *t = (TouchClassPtr *) class;
 
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
         for (int i = 0; i < (*t)->num_touches; i++) {
             free((*t)->touches[i].sprite.spriteTrace);
             free((*t)->touches[i].listeners);
@@ -1022,6 +1035,9 @@ CloseDevice(DeviceIntPtr dev)
     }
 
     /* a client may have the device set as client pointer */
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int j = 0; j < currentMaxClients; j++) {
         if (clients[j] && clients[j]->clientPtr == dev) {
             clients[j]->clientPtr = NULL;
@@ -1033,6 +1049,9 @@ CloseDevice(DeviceIntPtr dev)
     free(dev->deviceGrab.sync.event);
     free(dev->config_info);     /* Allocated in xf86ActivateDevice. */
     free(dev->last.scroll);
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int j = 0; j < dev->last.num_touches; j++)
         valuator_mask_free(&dev->last.touches[j].valuators);
     free(dev->last.touches);
@@ -1055,6 +1074,9 @@ CloseDeviceList(DeviceIntPtr *listHead)
     if (listHead == NULL)
         return;
 
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int i = 0; i < MAXDEVICES; i++)
         freedIds[i] = FALSE;
 
@@ -1283,8 +1305,14 @@ InitButtonClassDeviceStruct(DeviceIntPtr dev, int numButtons, Atom *labels,
         return FALSE;
     butc->numButtons = numButtons;
     butc->sourceid = dev->id;
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int i = 1; i <= numButtons; i++)
         butc->map[i] = map[i];
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int i = numButtons + 1; i < MAP_LENGTH; i++)
         butc->map[i] = i;
     memcpy(butc->labels, labels, numButtons * sizeof(Atom));
@@ -1374,6 +1402,9 @@ InitValuatorClassDeviceStruct(DeviceIntPtr dev, int numAxes, Atom *labels,
 
     AllocateMotionHistory(dev);
 
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int i = 0; i < numAxes; i++) {
         InitValuatorAxisStruct(dev, i, labels[i], NO_AXIS_LIMITS,
                                NO_AXIS_LIMITS, 0, 0, 0, mode);
@@ -1524,8 +1555,14 @@ InitStringFeedbackClassDeviceStruct(DeviceIntPtr dev,
         free(feedc);
         return FALSE;
     }
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int i = 0; i < num_symbols_supported; i++)
         *(feedc->ctrl.symbols_supported + i) = *symbols++;
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int i = 0; i < max_symbols; i++)
         *(feedc->ctrl.symbols_displayed + i) = (KeySym) 0;
     feedc->ctrl.id = 0;
@@ -1651,6 +1688,9 @@ InitTouchClassDeviceStruct(DeviceIntPtr device, unsigned int max_touches,
     if (!touch->touches)
         goto err;
     touch->num_touches = max_touches;
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int i = 0; i < max_touches; i++)
         TouchInitTouchPoint(touch, device->valuator, i);
 
@@ -1661,12 +1701,18 @@ InitTouchClassDeviceStruct(DeviceIntPtr device, unsigned int max_touches,
     if (!(device->last.touches = calloc(max_touches, sizeof(*device->last.touches))))
         goto err;
     device->last.num_touches = touch->num_touches;
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int i = 0; i < touch->num_touches; i++)
         TouchInitDDXTouchPoint(device, &device->last.touches[i]);
 
     return TRUE;
 
  err:
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int i = 0; i < touch->num_touches; i++)
         TouchFreeTouchPoint(device, i);
 
@@ -1711,14 +1757,21 @@ InitGestureClassDeviceStruct(DeviceIntPtr device, unsigned int max_touches)
 Bool
 BadDeviceMap(BYTE * buff, int length, unsigned low, unsigned high, XID *errval)
 {
+    volatile bool flag_thread_ret = false;
+#ifdef HAVE_OPENMP
+#pragma omp parallel for shared(flag_thread_ret)
+#endif
     for (int i = 0; i < length; i++)
+    {
+        if (flag_thread_ret) continue;
         if (buff[i]) {          /* only check non-zero elements */
             if ((low > buff[i]) || (high < buff[i])) {
                 *errval = buff[i];
-                return TRUE;
+                flag_thread_ret = true;
             }
         }
-    return FALSE;
+    }
+    return flag_thread_ret;
 }
 
 int
@@ -1860,14 +1913,22 @@ ProcSetPointerMapping(ClientPtr client)
 
     /* Core protocol specs don't allow for duplicate mappings; this check
      * almost certainly wants disabling through XFixes too. */
+    volatile bool flag_thread_ret = false;
+#ifdef HAVE_OPENMP
+#pragma omp parallel for shared(flag_thread_ret)
+#endif
     for (int i = 0; i < stuff->nElts; i++) {
+        if (flag_thread_ret) continue;
         for (int j = i + 1; j < stuff->nElts; j++) {
             if (map[i] && map[i] == map[j]) {
                 client->errorValue = map[i];
-                return BadValue;
+                flag_thread_ret = true;
             }
         }
     }
+
+    if (flag_thread_ret)
+        return BadValue;
 
     ret = ApplyPointerMapping(ptr, map, stuff->nElts, client);
 
@@ -2200,6 +2261,9 @@ ProcGetKeyboardControl(ClientPtr client)
         .bellPitch = ctrl->bell_pitch,
         .bellDuration = ctrl->bell_duration
     };
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int i = 0; i < 32; i++)
         rep.map[i] = ctrl->autoRepeats[i];
 
@@ -2423,6 +2487,9 @@ ProcGetMotionEvents(ClientPtr client)
         ymin = pWin->drawable.y - wBorderWidth(pWin);
         ymax = pWin->drawable.y + (int) pWin->drawable.height +
             wBorderWidth(pWin);
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
         for (int i = 0; i < count; i++)
             if ((xmin <= coords[i].x) && (coords[i].x < xmax) &&
                 (ymin <= coords[i].y) && (coords[i].y < ymax)) {
@@ -2464,6 +2531,9 @@ ProcQueryKeymap(ClientPtr client)
      * If it's BadAccess, we leave it empty & lie to the client.
      */
     if (rc == Success) {
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
         for (int i = 0; i < 32; i++)
             rep.map[i] = down[i];
     }
@@ -2527,6 +2597,9 @@ RecalculateMasterButtons(DeviceIntPtr slave)
 
         if (master->valuator) {
             event.num_valuators = master->valuator->numAxes;
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
             for (int i = 0; i < event.num_valuators; i++) {
                 event.valuators[i].min = master->valuator->axes[i].min_value;
                 event.valuators[i].max = master->valuator->axes[i].max_value;
@@ -2562,21 +2635,31 @@ ReleaseButtonsAndKeys(DeviceIntPtr dev)
         return;
 
     /* Release all buttons */
-    for (int i = 0; b && i < b->numButtons; i++) {
-        if (BitIsOn(b->down, i)) {
-            nevents =
-                GetPointerEvents(eventlist, dev, ButtonRelease, i, 0, NULL);
-            for (int j = 0; j < nevents; j++)
-                mieqProcessDeviceEvent(dev, &eventlist[j], NULL);
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
+    for (int i = 0; i < b->numButtons; i++) {
+        if (b) {
+            if (BitIsOn(b->down, i)) {
+                nevents =
+                    GetPointerEvents(eventlist, dev, ButtonRelease, i, 0, NULL);
+                for (int j = 0; j < nevents; j++)
+                    mieqProcessDeviceEvent(dev, &eventlist[j], NULL);
+            }
         }
     }
 
     /* Release all keys */
-    for (int i = 0; k && i < MAP_LENGTH; i++) {
-        if (BitIsOn(k->down, i)) {
-            nevents = GetKeyboardEvents(eventlist, dev, KeyRelease, i);
-            for (int j = 0; j < nevents; j++)
-                mieqProcessDeviceEvent(dev, &eventlist[j], NULL);
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
+    for (int i = 0; i < MAP_LENGTH; i++) {
+        if (k) {
+            if (BitIsOn(k->down, i)) {
+                nevents = GetKeyboardEvents(eventlist, dev, KeyRelease, i);
+                for (int j = 0; j < nevents; j++)
+                    mieqProcessDeviceEvent(dev, &eventlist[j], NULL);
+            }
         }
     }
 
@@ -2837,6 +2920,9 @@ valuator_set_mode(DeviceIntPtr dev, int axis, int mode)
     if (axis != VALUATOR_MODE_ALL_AXES)
         dev->valuator->axes[axis].mode = mode;
     else {
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
         for (int i = 0; i < dev->valuator->numAxes; i++)
             dev->valuator->axes[i].mode = mode;
     }
