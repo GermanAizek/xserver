@@ -61,7 +61,19 @@ foreach wflag: test_wflags
     endif
 endforeach
 
-add_project_arguments(common_wflags, language : ['c', 'objc'])
+omp_dep = dependency('openmp', required: true)
+if omp_dep.found()
+    common_wflags += ['-DHAVE_OPENMP']
+    common_wflags += ['-fopenmp']
+    add_project_link_arguments('-fopenmp', language : 'c')
+
+    # thread sanitizer
+    if get_option('buildtype') == 'debug'
+        common_wflags += ['-Db_sanitize=thread']
+    endif
+endif
+
+add_project_arguments(common_wflags, language : ['c', 'cpp'])
 
 libdrm_req = '>= 2.4.116'
 libselinux_req = '>= 2.0.86'
@@ -181,12 +193,12 @@ if ['windows', 'darwin', 'cygwin'].contains(host_machine.system())
     hal_option = 'false'
 endif
 
-udev_option = get_option('udev')
-udev_kms_option = get_option('udev_kms')
-if not dependency('libudev', required: (udev_option == 'true' or udev_kms_option == 'true')).found()
+#udev_option = get_option('udev')
+#udev_kms_option = get_option('udev_kms')
+#if not dependency('libudev', required: (udev_option == 'true' or udev_kms_option == 'true')).found()
     udev_option = 'false'
     udev_kms_option = 'false'
-endif
+#endif
 
 build_udev = (udev_option != 'false')
 build_udev_kms = (udev_kms_option != 'false')
@@ -591,6 +603,7 @@ common_dep = [
 
     pixman_dep,
     libbsd_dep,
+    omp_dep,
     xkbfile_dep,
     xfont2_dep,
     xdmcp_dep,
