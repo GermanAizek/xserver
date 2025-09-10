@@ -68,6 +68,10 @@ SOFTWARE.
 #include "privates.h"
 #include "xace.h"
 
+#ifdef HAVE_OPENMP
+#include <omp.h>
+#endif
+
 #define REDMAP 0
 #define GREENMAP 1
 #define BLUEMAP 2
@@ -313,6 +317,9 @@ dixCreateColormap(Colormap mid, ScreenPtr pScreen, VisualPtr pVisual,
             return BadAlloc;
         }
         pmap->clientPixelsRed[clientIndex] = ppix;
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
         for (int i = 0; i < size; i++)
             ppix[i] = i;
         pmap->numPixelsRed[clientIndex] = size;
@@ -355,6 +362,9 @@ dixCreateColormap(Colormap mid, ScreenPtr pScreen, VisualPtr pVisual,
                 return BadAlloc;
             }
             pmap->clientPixelsGreen[clientIndex] = ppix;
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
             for (int i = 0; i < size; i++)
                 ppix[i] = i;
             pmap->numPixelsGreen[clientIndex] = size;
@@ -371,6 +381,9 @@ dixCreateColormap(Colormap mid, ScreenPtr pScreen, VisualPtr pVisual,
                 return BadAlloc;
             }
             pmap->clientPixelsBlue[clientIndex] = ppix;
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
             for (int i = 0; i < size; i++)
                 ppix[i] = i;
             pmap->numPixelsBlue[clientIndex] = size;
@@ -422,6 +435,9 @@ FreeColormap(void *value, XID mid)
     (*pmap->pScreen->DestroyColormap) (pmap);
 
     if (pmap->clientPixelsRed) {
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
         for (int i = 0; i < LimitClients; i++)
             free(pmap->clientPixelsRed[i]);
     }
@@ -440,6 +456,9 @@ FreeColormap(void *value, XID mid)
         }
     }
     if ((pmap->class | DynamicClass) == DirectColor) {
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
         for (int i = 0; i < LimitClients; i++) {
             free(pmap->clientPixelsGreen[i]);
             free(pmap->clientPixelsBlue[i]);
@@ -716,6 +735,9 @@ doUpdateColors(ColormapPtr pmap)
     n = 0;
     pdef = defs;
     if (pmap->class == DirectColor) {
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
         for (int i = 0; i < size; i++) {
             if (!pmap->red[i].refcnt &&
                 !pmap->green[i].refcnt && !pmap->blue[i].refcnt)
@@ -2501,10 +2523,15 @@ IsMapInstalled(Colormap map, WindowPtr pWin)
     nummaps = (*pWin->drawable.pScreen->ListInstalledColormaps)
         (pWin->drawable.pScreen, pmaps);
     found = FALSE;
+    volatile bool flag_thread_break = false;
+#ifdef HAVE_OPENMP
+#pragma omp parallel for shared(flag_thread_break)
+#endif
     for (int imap = 0; imap < nummaps; imap++) {
+        if (flag_thread_break) continue;
         if (pmaps[imap] == map) {
             found = TRUE;
-            break;
+            flag_thread_break = true;
         }
     }
     free(pmaps);
@@ -2567,6 +2594,9 @@ ResizeVisualArray(ScreenPtr pScreen, int new_visual_count, DepthPtr depth)
 
     pScreen->visuals = visuals;
 
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
     for (int i = 0; i < new_visual_count; i++) {
         vid = dixAllocServerXID();
         pScreen->visuals[first_new_visual + i].vid = vid;
